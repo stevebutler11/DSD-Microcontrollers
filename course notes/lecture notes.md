@@ -9,6 +9,7 @@
     - [RP2040 Hardware](#rp2040-hw)
     - [GPIO ports](#gpio-ports)
     - [C SDK levels of abstraction](#c-sdk-abs)
+- [Week 3 - Timers, timer interrupts, SPI](#week3)
 
 <a id="week1"></a>
 
@@ -120,3 +121,145 @@ The C SDK abstracts register manipulations to function calls
     - provides an API for interacting with each piece of physical hardware
 - higher-level libraries:
     - higher level abstractions for combining multiple hardware support library functions in one
+
+<a id="week3"></a>
+
+## Week 3 - Timers, timer interrupts, SPI
+
+This session will talk about the timer peripheral, how to set up timer interrupts, ISRs (Interrupt Service Routines) and the SPI peripheral. Below is the main code for this session with some comments attached from the lecture. In short, the code sets up an SPI channel with an external DAC (Digital to Analogue Converter, a device that you send digital information, and it the converts that to an analogue voltage for communication to something like a speaker for instance). It then sets up a timer interrupt that interrupts at precisely 40KHz (40,000/s), that when the ISR is entered, a new SPI transaction is sent to the DAC. The consequence should be a pure tone coming from the speaker.
+
+The algorithm used to synthesise the audio of a desired frequency is called Direct Digital Synthesis (DDS). More on this in a later session.
+
+```c
+/**
+ * V. Hunter Adams
+ * DDS of sine wave on MCP4822 DAC w/ ISR
+ * 
+ * Modified example code from Raspberry Pi
+ * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+   GPIO 5 (pin 7) Chip select
+   GPIO 6 (pin 9) SCK/spi0_sclk
+   GPIO 7 (pin 10) MOSI/spi0_tx
+   3.3v (pin 36) -> VCC on DAC 
+   GND (pin 3)  -> GND on DAC 
+ */
+
+// standard C libraries
+#include <stdio.h>
+#include <math.h>
+// pico C SDK libraries
+#include "pico/stdlib.h"
+#include "hardware/spi.h" // pico hardware interface library. needs to be linked in CMakeLists.txt
+
+//DDS parameters
+#define two32 4294967296.0 // 2^32 
+#define Fs 40000
+// the DDS units:
+// volatile keyword tells the system that it should retrieve the most updated value for that variable from memory every time it's used. So anything updated asynchronously should have the keyword volatile added
+volatile unsigned int phase_accum_main;
+volatile unsigned int phase_incr_main = (800.0*two32)/Fs ;//
+
+// SPI data
+// uint16 is a short, the DAC expects 16 bit transactions
+uint16_t DAC_data ; // output value
+
+//DAC parameters
+// contains all the data the we'll send the DAC. 
+// It's a 12 bit DAC, so we'll mask in the bottom 12 bits (the value we want to convert to an analogue voltage)
+// all 0s will be 0.0V, 2^12 will be 3.3V
+// The top 4 bits are config bits for the DAC i.e. which channel, voltage range, reset bit etc.
+// A-channel, 1x, active
+#define DAC_config_chan_A 0b0011000000000000
+// B-channel, 1x, active
+#define DAC_config_chan_B 0b1011000000000000
+
+//SPI configurations
+// here we're associating names with GPIO ports
+#define PIN_MISO 4
+#define PIN_CS   5
+#define PIN_SCK  6
+#define PIN_MOSI 7
+#define SPI_PORT spi0
+
+// DDS sine table
+// this is to store the amplitudes of one period of a sine wave in an array (for DDS)
+#define sine_table_size 256
+volatile int sin_table[sine_table_size] ;
+
+// Timer ISR
+bool repeating_timer_callback(struct repeating_timer *t) {
+	// DDS phase and sine table lookup
+	phase_accum_main += phase_incr_main  ;
+    DAC_data = (DAC_config_chan_A | ((sin_table[phase_accum_main>>24] + 2048) & 0xffff))  ;
+
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1) ;
+
+    return true;
+}
+
+int main() {
+    // Initialize stdio
+    // sets up default UART port on GPIO 0 & 1
+    stdio_init_all();
+    printf("Hello, DAC!\n");
+
+    // Initialize SPI channel (channel, baud rate set to 20MHz)
+    // baud rate is how many bits/s is sent over the channel
+    // baud rate comes from the data sheet of the device you're trying to communicate with
+    spi_init(SPI_PORT, 20000000) ;
+    // Format (channel, data bits per transfer, polarity, phase, order)
+    // this configures the channel
+    // data bits per transfer comes from the data sheet of the device you're trying to communicate with
+    // for more info on polarity, phase and order, see the course website for supplementary notes on SPI comms
+
+    spi_set_format(SPI_PORT, 16, 0, 0, 0);
+
+    // Map SPI signals to GPIO ports
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_CS, GPIO_FUNC_SPI) ;
+
+    // === build the sine lookup table =======
+   	// scaled to produce values between 0 and 4096
+    int ii;
+    for (ii = 0; ii < sine_table_size; ii++){
+         sin_table[ii] = (int)(2047*sin((float)ii*6.283/(float)sine_table_size));
+    }
+
+    // Create a repeating timer that calls repeating_timer_callback.
+    // If the delay is > 0 then this is the delay between the previous callback ending and the next starting.
+    // If the delay is negative (see below) then the next call to the callback will be exactly x us after the
+    // start of the call to the last callback
+    struct repeating_timer timer;
+
+    // Negative delay so means we will call repeating_timer_callback, and call it again
+    // 25us (40kHz) later regardless of how long the callback took to execute
+    add_repeating_timer_us(-25, repeating_timer_callback, NULL, &timer);
+    while(1){
+    }
+    return 0;
+}
+```
+
+For clarity, this shows what peripherals have been touched upon in this session:
+
+![SPI Timer peripheral](./images/spi_timer_peripheral.png)
+
+It's common when learning a new micro controller to initially get an LED to blink, and then as a next project get a timer interrupt working.
+
+### Notes on the timer peripheral & SDK
+
+- at the lowest level, there's a piece of hardware inside the RP2040 that ticks at 1/us
+- There's a 64-bit timer inside the RP2040 (two 32-bit registers, most significant 32 bits in one register, least significant bits on other register)
+- once per us, every us, the value incr. by 1
+- therefore overflows once every approx. 500,000 years
+- bottom 32-bits overflow every approx. 72 mins so if you're trying to set up an interrupt event longer than 72 mins then use another peripheral (real-time clock)
+- associated with the time peripheral, are 4 32-bit alarm registers (alarm 0, 1, 2, & 3)
+- if you write a value to any of those registers, and associate an interrupt with them, then once the bottom 32-bits of the timer peripheral matches the alarm register the interrupt will be called
+- the C SDK abstracts this capability into the hardware library for the timer so you don't have to manipulate the registers yourself (this is the lowest level abstraction beside writing to registers yourself)
+- You could write logic into the interrupt to repeatedly call the timer at a specified delay
+- Raspberry PI company understood this would be a commonly done thing and so incl. that in the SDK at a higher level of abstraction in the pico_time high level library (repeating_timer function)
