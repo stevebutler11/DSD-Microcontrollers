@@ -10,6 +10,10 @@
     - [GPIO ports](#gpio-ports)
     - [C SDK levels of abstraction](#c-sdk-abs)
 - [Week 3 - Timers, timer interrupts, SPI](#week3)
+    - [Code run-through](#code-runthrough)
+    - [Notes on the timer peripheral & SDK](#timer-peripheral-notes)
+- [Week 4 - Direct Digital Synthesis](#week4)
+    - [Central abstraction](#central-abstraction)
 
 <a id="week1"></a>
 
@@ -129,6 +133,10 @@ The C SDK abstracts register manipulations to function calls
 This session will talk about the timer peripheral, how to set up timer interrupts, ISRs (Interrupt Service Routines) and the SPI peripheral. Below is the main code for this session with some comments attached from the lecture. In short, the code sets up an SPI channel with an external DAC (Digital to Analogue Converter, a device that you send digital information, and it the converts that to an analogue voltage for communication to something like a speaker for instance). It then sets up a timer interrupt that interrupts at precisely 40KHz (40,000/s), that when the ISR is entered, a new SPI transaction is sent to the DAC. The consequence should be a pure tone coming from the speaker.
 
 The algorithm used to synthesise the audio of a desired frequency is called Direct Digital Synthesis (DDS). More on this in a later session.
+
+<a id="code-runthrough"></a>
+
+### Code run-through:
 
 ```c
 /**
@@ -251,6 +259,8 @@ For clarity, this shows what peripherals have been touched upon in this session:
 
 It's common when learning a new micro controller to initially get an LED to blink, and then as a next project get a timer interrupt working.
 
+<a id="timer-peripheral-notes"></a>
+
 ### Notes on the timer peripheral & SDK
 
 - at the lowest level, there's a piece of hardware inside the RP2040 that ticks at 1/us
@@ -263,3 +273,21 @@ It's common when learning a new micro controller to initially get an LED to blin
 - the C SDK abstracts this capability into the hardware library for the timer so you don't have to manipulate the registers yourself (this is the lowest level abstraction beside writing to registers yourself)
 - You could write logic into the interrupt to repeatedly call the timer at a specified delay
 - Raspberry PI company understood this would be a commonly done thing and so incl. that in the SDK at a higher level of abstraction in the pico_time high level library (repeating_timer function)
+
+<a id="week4"></a>
+
+## Week 4 - Direct Digital Synthesis
+
+<a id="central-abstraction"></a>
+
+### Central abstraction
+
+DDS allows you to synthesise a sine waveform of a desired frequency within fractions of fractions of Hz with minimal memory & computation
+
+- The sine wave is the projection of a rotating phaser onto the imaginary axis
+- overflowing a variable is isomorphic to one rotation of a phaser
+- we can represent the angle of a phaser with a 32-bit number we'll call the accumulator
+- As a consequence, incrementing the accumulator is interpreted as rotating the phaser
+
+![Phaser demo](./images/phaser-demo.png)
+
