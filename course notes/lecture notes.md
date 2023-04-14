@@ -2,22 +2,27 @@
 
 ## Table of contents
 
-- [Week 1 - course introduction](#week1)
+- [Session 1 - course introduction](#week1)
     - [RP2040 specs](#rp2040-specs)
-- [Week 2 - Hardware/Software Overview](#week2)
+- [Session 2 - Hardware/Software Overview](#week2)
     - [Levels of abstraction of between hardware and software](#levels-abs)
     - [RP2040 Hardware](#rp2040-hw)
     - [GPIO ports](#gpio-ports)
     - [C SDK levels of abstraction](#c-sdk-abs)
-- [Week 3 - Timers, timer interrupts, SPI](#week3)
+- [Session 3 - Timers, timer interrupts, SPI](#week3)
     - [Code run-through](#code-runthrough)
     - [Notes on the timer peripheral & SDK](#timer-peripheral-notes)
-- [Week 4 - Direct Digital Synthesis](#week4)
+- [Session 4 - Direct Digital Synthesis](#week4)
     - [Central abstraction](#central-abstraction)
+    - [The DDS Algorithm](#dds-algo)
+    - [How big does the sine table need to be?](#how-big-sine-table)
+    - [How to index into the sine table?](#how-index-sine)
+    - [Common questions](#common-qs)
+    
 
 <a id="week1"></a>
 
-## Week 1 - course introduction
+## Session 1 - course introduction
 
 <a id="rp2040-specs"></a>
 
@@ -58,7 +63,7 @@ __QSPI interface to external flash__
 
 <a id="week2"></a>
 
-## Week 2 - Hardware/Software Overview
+## Session 2 - Hardware/Software Overview
 
 <a id="levels-abs"></a>
 
@@ -128,7 +133,7 @@ The C SDK abstracts register manipulations to function calls
 
 <a id="week3"></a>
 
-## Week 3 - Timers, timer interrupts, SPI
+## Session 3 - Timers, timer interrupts, SPI
 
 This session will talk about the timer peripheral, how to set up timer interrupts, ISRs (Interrupt Service Routines) and the SPI peripheral. Below is the main code for this session with some comments attached from the lecture. In short, the code sets up an SPI channel with an external DAC (Digital to Analogue Converter, a device that you send digital information, and it the converts that to an analogue voltage for communication to something like a speaker for instance). It then sets up a timer interrupt that interrupts at precisely 40KHz (40,000/s), that when the ISR is entered, a new SPI transaction is sent to the DAC. The consequence should be a pure tone coming from the speaker.
 
@@ -276,7 +281,7 @@ It's common when learning a new micro controller to initially get an LED to blin
 
 <a id="week4"></a>
 
-## Week 4 - Direct Digital Synthesis
+## Session 4 - Direct Digital Synthesis
 
 <a id="central-abstraction"></a>
 
@@ -291,3 +296,56 @@ DDS allows you to synthesise a sine waveform of a desired frequency within fract
 
 ![Phaser demo](./images/phaser-demo.png)
 
+<a id="dds-algo"></a>
+
+### The DDS Algorithm
+
+V. Hunter Adams' website has an in-depth page for the DDS algorithm and how it pertains to the project. For a full treatment [see here](https://vanhunteradams.com/DDS/DDS.html)
+
+- audio synthesis requires precise timing. Samples will be sent to the DAC at a fixed rate, $F_s (Hz)$
+- a timer interrupt will be used to achieve that timing
+- incrementing the accumulator is interpreted as a rotation of the phaser. The faster you increment, the higher the sine wave frequency
+- in order to produce a sine wave of a desired frequency:
+    1. enter the repeating timer callback function
+    2. increment the accumulator
+    3. lookup the amplitude of the sine wave at that phaser angle
+    4. send the amplitude to the DAC
+    5. leave the repeating timer callback function
+    6. $\frac 1 F_s$ seconds later, re-enter and go back to (1)
+- in step 2, the _more_ the accumulator is incremented, the faster the phaser is rotating, and the higher frequency the output sine wave. How do we know how much to increment in order to achieve a desired output frequency?
+
+taken from the DDS page: 
+
+$N$ = increment amount = $\frac {F_{out}} {F_s} \times 2^{32}$
+
+<a id="how-big-sine-table"></a>
+
+### How big does the sine table need to be?
+
+paraphrased from the web page:
+
+> If you use an int for your accumulator, then the accumulator variable can, in principle, assume  $2^{32}$ different states. However, you do not need a sine lookup table that is $2^{32}$ elements long. You can get away with significantly less entries than that. How many is enough?
+> 
+> The less entries that you have in your sine table, the more harmonic distortion you will hear in your generated tones. This is due to the fact that the DAC acts like a zeroth-order hold. If you send it a value, it retains that value until you send it a new one. So, smooth sine waves become the jagged approximations to sine waves shown below. The more entries in your sine table, the better this approximation.
+> 
+> A way of thinking about this is that we have a square-wave carrier wave being modulated by a sine wave. 
+> 
+> Note that the fundamental frequency (the frequency of interests) remains fixed at fft index 1, which corresponds to a frequency of 1 cycle. The first error harmonic is approximately at the number of entries in the table (i.e. the sample frequency) minus 1. So, as you increase the number of entries in the table, the first error harmonic moves away from the fundamental. As you increase the entries in your table, the first error harmonic also decreases in amplitude relative to the fundamental (attenuates).
+
+<a id="how-index-sine"></a>
+
+### How to index into the sine table?
+
+- use the most significant 8 bits of your accumulator to index into the sine table
+
+<a id="common-qs"></a>
+
+### Common questions
+
+> Question: If we are only using 8 bits to index into a sine table, why does our accumulator need to be more than 8 bits?
+> 
+> Answer: By having an integrator that is greater than 8 bits, you are able to step by a fractional index through your sine table. This means that, depending on the frequency you're synthesizing, you may send the same entry of the sine table to the DAC a few samples in a row. That's ok! Or, if you're synthesizing a higher frequency, you may skip entries in your sine table. That's ok too, as long as you skip the correct entries. The DDS algorithm makes certain that you do.
+
+> Question: How else could I improve my output waveform (i.e. decrease the amplitude of the error harmonics) without sampling faster, and without adding more entries to a lookup table?
+> 
+> Answer: You could add an analog low-pass filter to the DAC output! If you set the cutoff frequency so that it will pass signals as high as you're trying to synthesize and attenuates all higher frequencies, then you get a significant reduction in error harmonics for free. Use hardware when you can!
