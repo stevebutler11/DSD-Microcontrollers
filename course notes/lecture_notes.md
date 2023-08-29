@@ -291,3 +291,10 @@ DDS allows you to synthesise a sine waveform of a desired frequency within fract
 
 ![Phaser demo](./images/phaser-demo.png)
 
+
+
+
+
+
+
+## Week 6 - 
